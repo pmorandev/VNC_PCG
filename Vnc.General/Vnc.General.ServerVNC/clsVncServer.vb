@@ -1,4 +1,5 @@
-﻿Imports System.Threading
+﻿Imports System.Text
+Imports System.Threading
 Imports Vnc.General.Comunicacion
 Imports Vnc.General.Enumerador
 
@@ -9,7 +10,7 @@ Public Class clsVncServer
 
     Private m_iVersionMajor As Integer = 0
     Private m_iVersionMenor As Integer = 0
-    Private m_sRfbVersion As String = "RFB 003.008\n"
+    Private m_sRfbVersion As String = "RFB 003.008"
     Private m_sNombreServer As String
     Private m_bCerrando As Boolean = False
     Private m_oTerminalHandler As Thread
@@ -187,9 +188,11 @@ Public Class clsVncServer
 
     Private Sub SendVersionProtocoloRFB()
         Try
-            Dim sRes() As Byte = System.Text.Encoding.ASCII.GetBytes(m_sRfbVersion)
-            m_oTcpServer.HacerSend(sRes)
-
+            Dim cSalto As Char = System.Convert.ToChar(System.Convert.ToUInt32("0A", 16))
+            Dim sVersion() As Char = {"R", "F", "B", " ", "0", "0", "3", ".", "0", "0", "8", cSalto}
+            Dim sRes() As Byte = System.Text.Encoding.ASCII.GetBytes(sVersion)
+            m_oTcpServer.Escritura.Write(sRes)
+            m_oTcpServer.Escritura.Flush()
         Catch ex As Exception
             Throw
         End Try
@@ -201,12 +204,12 @@ Public Class clsVncServer
             If m_iVersionMenor = 3 Then
                 m_oTcpServer.Escritura.Write(UInt32.Parse("1"))
             Else
-                Dim types() As Byte = New Byte(0) {1}
-                Dim bit As Byte = CType(types.Length, Byte)
+                Dim types() As Byte = {1}
+                Dim bit As Byte = CByte(CUInt(types.Length))
                 m_oTcpServer.Escritura.Write(bit)
 
                 For i As Integer = 0 To types.Length - 1
-                    m_oTcpServer.Escritura.Write(types(i))
+                    m_oTcpServer.Escritura.Write(BitConverter.GetBytes(1))
                 Next
 
                 m_oTcpServer.Escritura.Flush()
@@ -214,9 +217,7 @@ Public Class clsVncServer
                 If m_iVersionMenor >= 7 Then m_oTcpServer.Memoria.ReadByte()
 
                 If m_iVersionMenor = 8 Then
-                    b = BitConverter.GetBytes(UInt32.Parse(0))
-                    Array.Reverse(b)
-                    m_oTcpServer.Memoria.Write(b, 0, b.Length)
+                    m_oTcpServer.Escritura.Write(CUInt(0))
                 End If
             End If
 
@@ -271,6 +272,7 @@ Public Class clsVncServer
             m_evFinalizado.Set()
         End Try
     End Sub
+
 
 #End Region
 

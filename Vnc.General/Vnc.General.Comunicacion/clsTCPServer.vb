@@ -96,7 +96,7 @@ Public Class clsTCPServer
             m_sockListen.NoDelay = True
             m_sockListen.Bind(ipLocalEndPoint)
             'Dim lingerOption As New LingerOption(True, 1)
-            'm_sockListen.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.DontLinger, True)
+            m_sockListen.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.DontLinger, True)
             m_sockListen.Listen(1000)
 
             'Espera la siguiente conexión asincronicamente
