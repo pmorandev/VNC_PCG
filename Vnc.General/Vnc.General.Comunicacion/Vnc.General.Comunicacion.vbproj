@@ -63,6 +63,7 @@
     <Import Include="System.Threading.Tasks" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="clsEndianBinaryReader.vb" />
     <Compile Include="clsEndianBinaryWriter.vb" />
     <Compile Include="clsTCPCliente.vb" />
     <Compile Include="clsTCPServer.vb" />

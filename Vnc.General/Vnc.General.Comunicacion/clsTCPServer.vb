@@ -17,6 +17,7 @@ Public Class clsTCPServer
 
     Private m_oStream As NetworkStream
     Private m_oWriter As clsEndianBinaryWriter
+    Private m_oReader As clsEndianBinaryReader
     Private m_sockLock As New Object
     Public Event EventoTCPServer As EventHandler(Of clsTCPServerEventArgs)
 
@@ -69,6 +70,18 @@ Public Class clsTCPServer
     Public ReadOnly Property Escritura As clsEndianBinaryWriter
         Get
             Return m_oWriter
+        End Get
+    End Property
+
+    Public ReadOnly Property Lectura As clsEndianBinaryReader
+        Get
+            Return m_oReader
+        End Get
+    End Property
+
+    Public ReadOnly Property SockWork As Socket
+        Get
+            Return m_sockWork
         End Get
     End Property
 
@@ -134,11 +147,6 @@ Public Class clsTCPServer
             Dim sockWork As Socket = sockListener.EndAccept(arResult)
             m_sockWork = sockWork
             m_sockWork.NoDelay = True
-            'sockWork.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, 1000)
-            'm_sockWork.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, 1000)
-            'Dim lingerOption As New LingerOption(True, 1)
-            'sockWork.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Linger, lingerOption)
-            'm_sockWork.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Linger, lingerOption)
 
             oEstado = New clsTCPServerStateObject()
             oEstado.m_WorkSocket = sockWork
@@ -156,7 +164,8 @@ Public Class clsTCPServer
             'Deja el socket esperando recibir con el fin de detectar desconexiones
             m_oStream = New NetworkStream(m_sockWork, True)
             m_oWriter = New clsEndianBinaryWriter(m_oStream)
-            HacerRead(oEstado)
+            m_oReader = New clsEndianBinaryReader(m_oStream)
+            'HacerRead(oEstado)
 
         Catch oe As ObjectDisposedException
             Throw
@@ -185,12 +194,12 @@ Public Class clsTCPServer
 
             oEstado.m_dtTimeStamp = DateTime.Now
             oEstado.m_TCPStatus = EnumServerStatus.Reading
-            oEstado.m_MsgSize = 12   'primero se van a recibir 12 bytes con la version del protocolo RFB
             ReDim oEstado.m_Buffer(0)
             ReDim oEstado.m_Buffer(oEstado.m_MsgSize)
             oEstado.m_BytesReceived = 0
 
-            m_oStream.BeginRead(oEstado.m_Buffer, 0, oEstado.m_MsgSize, New AsyncCallback(AddressOf ReadCallback), oEstado)
+            m_oReader.BaseStream.BeginRead(oEstado.m_Buffer, 0, oEstado.m_MsgSize, New AsyncCallback(AddressOf ReadCallback), oEstado)
+            'm_oStream.BeginRead(oEstado.m_Buffer, 0, oEstado.m_MsgSize, New AsyncCallback(AddressOf ReadCallback), oEstado)
             'm_sockWork.BeginReceive(oEstado.m_Buffer, 0, oEstado.m_MsgSize, SocketFlags.None, New AsyncCallback(AddressOf ReadCallback), oEstado)
             bResult = True
 
@@ -226,8 +235,7 @@ Public Class clsTCPServer
                 Exit Try
             End If
 
-            'Dim iBytesRead As Integer = sockWork.EndReceive(ar)
-            Dim iBytesRead As Integer = m_oStream.EndRead(ar)
+            Dim iBytesRead As Integer = m_oReader.BaseStream.EndRead(ar)
             If (iBytesRead = 0) Then
                 ' No se recibió nada en el buffer porque se cerró la conexión
                 Finalizar()
@@ -246,7 +254,7 @@ Public Class clsTCPServer
                 e = New clsTCPServerEventArgs(EnumServerEvent.Recibido, oEstado.m_Buffer)
                 OnEventoTCPServer(e)
 
-                HacerRead(oEstado)
+                'HacerRead(oEstado)
             Else
                 'No se ha recibido el mensaje completo, continua esperando el resto
                 m_oStream.BeginRead(oEstado.m_Buffer, oEstado.m_BytesReceived, oEstado.m_Buffer.Length - oEstado.m_BytesReceived, New AsyncCallback(AddressOf ReadCallback), oEstado)
@@ -639,11 +647,21 @@ Public Class clsTCPServerEventArgs
     Inherits EventArgs
     Private m_bBuffer() As Byte
     Private m_eEvento As EnumServerEvent
+    Private m_eMsgVncCliente As EnumClientVNCMensajes
 
     Public Sub New(ByVal eEvento As EnumServerEvent, ByVal bBuffer() As Byte)
         m_eEvento = eEvento
         m_bBuffer = bBuffer
     End Sub
+
+    Public Property MensajeVncCliente As EnumClientVNCMensajes
+        Get
+            Return m_eMsgVncCliente
+        End Get
+        Set(value As EnumClientVNCMensajes)
+            m_eMsgVncCliente = value
+        End Set
+    End Property
 
     Public ReadOnly Property Evento() As EnumServerEvent
         Get

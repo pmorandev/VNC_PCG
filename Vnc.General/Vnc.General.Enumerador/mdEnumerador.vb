@@ -31,6 +31,16 @@ Public Enum EnumEstadoVncServer
     Saliendo = 64
 End Enum
 
+Public Enum EnumClientVNCMensajes As Byte
+    SetPixelFormat = 0
+    ReadColorMapEntries = 1
+    SetEncodings = 2
+    FramebufferUpdateRequest = 3
+    KeyEvent = 4
+    PointerEvent = 5
+    ClientCutText = 6
+End Enum
+
 Module mdEnumerador
 
 End Module

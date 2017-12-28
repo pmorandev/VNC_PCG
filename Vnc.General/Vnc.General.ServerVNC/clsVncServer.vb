@@ -1,4 +1,5 @@
 ﻿Imports System.Text
+Imports System.Drawing
 Imports System.Threading
 Imports Vnc.General.Comunicacion
 Imports Vnc.General.Enumerador
@@ -14,14 +15,20 @@ Public Class clsVncServer
     Private m_sNombreServer As String
     Private m_bCerrando As Boolean = False
     Private m_oTerminalHandler As Thread
+    Private m_bShared As Boolean = False
 
     Private m_eEstadoTerminal As EnumEstadoVncServer = EnumEstadoVncServer.NoInicializado
     Private m_eEstadoTCP As EnumServerStatus = EnumServerStatus.Idle
-    Private m_Events(1) As AutoResetEvent
+    Private m_Events(3) As AutoResetEvent
     Private m_evConectado As AutoResetEvent = New AutoResetEvent(False)
     Private m_evFinalizado As AutoResetEvent = New AutoResetEvent(False)
+    Private m_evSetPixelFormat As AutoResetEvent = New AutoResetEvent(False)
+    Private m_evSetEncodings As AutoResetEvent = New AutoResetEvent(False)
 
     Private m_bDisposed As Boolean = False
+
+    Private m_oFrameBuffer As clsFramebuffer
+    Private m_iEncodings() As UInt32
 
     Public Event ServerStatusChanged As EventHandler(Of clsVncServerEventArgs)
 
@@ -33,6 +40,22 @@ Public Class clsVncServer
 
             m_sNombreServer = sNombreServer
             m_oTcpServer = New clsTCPServer(5900)
+
+            Dim oPantalla As Size = ScreenSize()
+            m_oFrameBuffer = New clsFramebuffer(oPantalla.Width, oPantalla.Height)
+            With m_oFrameBuffer
+                .BitsPerPixel = 32
+                .ColorDepth = 24
+                .UseBigEndian = True
+                .SupportTrueColor = False
+                .RedShiftValue = 16
+                .GreenShiftValue = 8
+                .BlueShiftValue = 0
+                .BlueMaxValue = Int32.Parse("FF", System.Globalization.NumberStyles.HexNumber)
+                .GreenMaxValue = Int32.Parse("FF", System.Globalization.NumberStyles.HexNumber)
+                .RedMaxValue = Int32.Parse("FF", System.Globalization.NumberStyles.HexNumber)
+                .DesktopName = sNombreServer
+            End With
         Catch ex As Exception
             Throw
         End Try
@@ -60,6 +83,12 @@ Public Class clsVncServer
 
         m_bDisposed = True
     End Sub
+
+    Public ReadOnly Property Compartido As Boolean
+        Get
+            Return m_bShared
+        End Get
+    End Property
 #End Region
 
 #Region "Rutinas de Inicializacion Handler RFB"
@@ -86,7 +115,8 @@ Public Class clsVncServer
         Try
             m_Events(0) = m_evConectado
             m_Events(1) = m_evFinalizado
-            'm_Events(2) = m_hLocal
+            m_Events(2) = m_evSetPixelFormat
+            m_Events(3) = m_evSetEncodings
 
             m_eEstadoTerminal = EnumEstadoVncServer.EsperandoConexion
             CheckTerminalMode()
@@ -113,25 +143,26 @@ Public Class clsVncServer
                         m_eEstadoTerminal = EnumEstadoVncServer.EsperandoProtocolVersion
                         CheckTerminalMode()
                         SendVersionProtocoloRFB()
-                    Case 1
+                        ReadVersionProtocoloRFB()
+                        SendSecurityProtocoloRFB()
+                        ReadClientInit()
+                        WriteServerInit()
+                        InicializacionEscucha()
+                    Case 2
+                        m_oTcpServer.Lectura.ReadBytes(3)
+                        Dim bf() As Byte = m_oTcpServer.Lectura.ReadBytes(16)
+                        Dim oFrameBuffer As clsFramebuffer = m_oFrameBuffer.FromPixelFormat(bf, m_oFrameBuffer.Ancho, m_oFrameBuffer.Alto)
+                        m_oFrameBuffer = oFrameBuffer
+                        InicializacionEscucha()
+                    Case 3
+                        m_oTcpServer.Lectura.ReadBytes(1)
+                        Dim len As UShort = m_oTcpServer.Lectura.ReadUInt16()
+                        ReDim m_iEncodings(len)
 
-                        'Si ay una nueva conexion
-                        'Case 1
-                        '    ''Si hay un evento de Desconectar, hace lo siguiente:
-                        '    'm_evLog.Escribir(m_sClase, sRutina, m_sProceso, clsLogEntryEventTypeEnum.Debug, PrepararMensaje("Thread de Terminal recibio evento de desconectar"))
-
-                        '    ''1. Setea la variable de Cerrando
-                        '    ''2. Inicia el proceso de desconexión del SrvCom y la Estación
-                        '    'm_bCerrando = True
-                        '    'm_TCPServer.Finalizar()
-
-                        'Case 2
-                        '    ''Si hay un evento de que no hay mas links disponibles, hace lo siguiente:
-                        '    'm_evLog.Escribir(m_sClase, sRutina, m_sProceso, clsLogEntryEventTypeEnum.Debug, PrepararMensaje("Thread de Terminal recibio evento que no hay links disponibles"))
-
-                        '    ''1. Inicia el proceso de desconexión del SrvCom y la Estación
-                        '    'm_TCPServer.Finalizar()
-
+                        For i As Integer = 0 To CInt(len)
+                            m_iEncodings(i) = m_oTcpServer.Lectura.ReadUInt32()
+                        Next
+                        InicializacionEscucha()
                 End Select
             End While
 
@@ -156,10 +187,12 @@ Public Class clsVncServer
 
 
                 Case EnumServerEvent.Recibido
-                    Select Case m_eEstadoTerminal
-                        Case EnumEstadoVncServer.EsperandoProtocolVersion
-                            ReadVersionProtocoloRFB(e.Buffer)
-                            SendSecurityProtocoloRFB()
+                    Dim bMsgcliente As Byte = Convert.ToByte(CInt(e.Buffer(0)))
+                    Select Case bMsgcliente
+                        Case EnumClientVNCMensajes.SetPixelFormat
+                            m_evSetPixelFormat.Set()
+                        Case EnumClientVNCMensajes.SetEncodings
+                            m_evSetEncodings.Set()
                     End Select
 
                 Case EnumServerEvent.Conectado
@@ -226,11 +259,11 @@ Public Class clsVncServer
         End Try
     End Sub
 
-    Private Sub ReadVersionProtocoloRFB(ByVal bBuffer() As Byte)
+    Private Sub ReadVersionProtocoloRFB()
         Try
             Dim verMajor As String = ""
             Dim verMinor As String = ""
-            Dim b() As Byte = bBuffer
+            Dim b() As Byte = m_oTcpServer.Lectura.ReadBytes(12)
             If Convert.ToInt32(b(0)).Equals(Int32.Parse("52", System.Globalization.NumberStyles.HexNumber)) And
                Convert.ToInt32(b(1)).Equals(Int32.Parse("46", System.Globalization.NumberStyles.HexNumber)) And
                Convert.ToInt32(b(2)).Equals(Int32.Parse("42", System.Globalization.NumberStyles.HexNumber)) And
@@ -273,7 +306,46 @@ Public Class clsVncServer
         End Try
     End Sub
 
+    Private Function ReadClientInit() As Boolean
+        Dim bRes As Boolean = False
+        Try
+            m_bShared = (m_oTcpServer.Lectura.ReadByte().Equals(1))
+            bRes = m_bShared
+        Catch ex As Exception
+            m_evFinalizado.Set()
+        End Try
 
+        Return bRes
+    End Function
+
+    Private Sub WriteServerInit()
+        Try
+            With m_oTcpServer.Escritura
+                .Write(Convert.ToUInt16(m_oFrameBuffer.Ancho))
+                .Write(Convert.ToUInt16(m_oFrameBuffer.Alto))
+                .Write(m_oFrameBuffer.ToPixelFormat())
+                .Write(Convert.ToUInt32(m_oFrameBuffer.DesktopName.Length))
+                .Write(System.Text.Encoding.ASCII.GetBytes(m_oFrameBuffer.DesktopName))
+                .Flush()
+            End With
+        Catch ex As Exception
+            m_evFinalizado.Set()
+        End Try
+    End Sub
+
+    Private Sub InicializacionEscucha(Optional ByVal iMsgSize As Integer = 1)
+        Try
+            Dim oEstado As clsTCPServerStateObject
+
+            oEstado = New clsTCPServerStateObject()
+            oEstado.m_WorkSocket = m_oTcpServer.SockWork
+            oEstado.m_TCPStatus = EnumServerStatus.Idle
+            oEstado.m_MsgSize = iMsgSize
+            m_oTcpServer.HacerRead(oEstado)
+        Catch ex As Exception
+
+        End Try
+    End Sub
 #End Region
 
 #Region "Rutinas Varias"
@@ -288,6 +360,13 @@ Public Class clsVncServer
 
         End Try
     End Sub
+
+    Private Function ScreenSize() As Size
+        Dim oSize As New Size()
+        oSize.Height = System.Windows.Forms.Screen.PrimaryScreen.Bounds.Height
+        oSize.Width = System.Windows.Forms.Screen.PrimaryScreen.Bounds.Width
+        Return oSize
+    End Function
 
 #End Region
 
